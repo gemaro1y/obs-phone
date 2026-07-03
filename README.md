@@ -24,7 +24,7 @@
 ## Установка
 
 ```bash
-git clone https://github.com/USER/phone-stream.git
+git clone https://github.com/gemaro1y/phone-stream.git
 cd phone-stream
 npm install
 ```
@@ -88,6 +88,13 @@ phone-stream/
 - **node-forge** — генерация SSL-сертификата
 - **Lucide** — иконки UI
 - **Canvas API** — JPEG-кодирование на телефоне
+
+## Поддержка
+
+Если проект оказался полезным, вы можете поддержать автора:
+
+- **Donatbox**: https://donatex.gg/donate/gemaro1y
+- **Telegram**: [@fovdov](https://t.me/fovdov)
 
 ## Лицензия
 
