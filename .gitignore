@@ -1,0 +1,7 @@
+node_modules/
+cert/
+recordings/
+media/
+*.log
+.DS_Store
+Thumbs.db

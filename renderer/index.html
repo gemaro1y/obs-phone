@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PhoneStream</title>
+  <link rel="stylesheet" href="/renderer/style.css">
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <div class="header-left">
+        <span class="logo">📹</span>
+        <h1>PhoneStream</h1>
+      </div>
+      <div class="header-right">
+        <span class="status-badge" id="status-badge">
+          <span class="status-dot" id="status-dot"></span>
+          <span id="status-label">Ожидание</span>
+        </span>
+      </div>
+    </header>
+
+    <main class="main">
+      <div class="panel-left">
+        <div class="qr-section">
+          <h2>Сканируйте QR-код</h2>
+          <p class="subtitle">Откройте камеру телефона</p>
+          <div class="qr-wrapper">
+            <img id="qr-code" alt="QR Code">
+          </div>
+          <div class="code-display">
+            <span class="code-label">Или введите код:</span>
+            <span class="code-value" id="connect-code">----</span>
+          </div>
+          <div class="url-display">
+            <span id="mobile-url">-</span>
+            <button class="btn-copy" id="btn-copy" title="Копировать">📋</button>
+          </div>
+        </div>
+
+        <div class="obs-section">
+          <h3>Настройка OBS Studio</h3>
+          <ol class="obs-steps">
+            <li>Откройте OBS → Источники → <b>+</b></li>
+            <li>Выберите <b>«Браузер»</b></li>
+            <li>URL: <code id="obs-url">http://localhost:4800/stream</code></li>
+            <li>Ширина: <code>1920</code>, Высота: <code>1080</code></li>
+            <li>Уберите «Локальные файлы»</li>
+            <li>Нажмите «ОК»</li>
+          </ol>
+        </div>
+      </div>
+
+      <div class="panel-right">
+        <div class="preview-section">
+          <h3>Превью стрима</h3>
+          <div class="preview-wrapper">
+            <video id="preview-video" autoplay playsinline muted></video>
+            <div class="preview-placeholder" id="preview-placeholder">
+              <span class="placeholder-icon">📱</span>
+              <span>Ожидание стрима с телефона</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="stats-section">
+          <h3>Статистика</h3>
+          <div class="stats-grid">
+            <div class="stat-card">
+              <div class="stat-label">Разрешение</div>
+              <div class="stat-value" id="stat-resolution">-</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">FPS</div>
+              <div class="stat-value" id="stat-fps">-</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Битрейт</div>
+              <div class="stat-value" id="stat-bitrate">-</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Статус</div>
+              <div class="stat-value" id="stat-status">Ожидание</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <script>
+    let socket = null;
+    let pc = null;
+    const PC_CONFIG = {
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+      ],
+    };
+
+    fetch('/api/info').then(r => r.json()).then(info => {
+      document.getElementById('qr-code').src = info.qrCode || '';
+      document.getElementById('connect-code').textContent = info.code || '----';
+      document.getElementById('mobile-url').textContent = `http://${info.ip}:${info.port}/mobile`;
+      document.getElementById('obs-url').textContent = `http://localhost:${info.port}/stream`;
+    });
+
+    document.getElementById('btn-copy').addEventListener('click', () => {
+      const url = document.getElementById('mobile-url').textContent;
+      navigator.clipboard.writeText(url).then(() => {
+        document.getElementById('btn-copy').textContent = '✅';
+        setTimeout(() => { document.getElementById('btn-copy').textContent = '📋'; }, 2000);
+      });
+    });
+
+    function connectSignaling() {
+      socket = io(window.location.origin, { transports: ['websocket', 'polling'] });
+
+      socket.on('connect', () => {
+        socket.emit('join', 'desktop');
+      });
+
+      socket.on('phone-status', (data) => {
+        const dot = document.getElementById('status-dot');
+        const label = document.getElementById('status-label');
+        if (data.connected) {
+          dot.classList.add('connected');
+          label.textContent = 'Телефон подключен';
+          document.getElementById('stat-status').textContent = 'Подключен';
+          document.getElementById('stat-status').style.color = '#2ecc71';
+        } else {
+          dot.classList.remove('connected');
+          label.textContent = 'Ожидание';
+          document.getElementById('stat-status').textContent = 'Ожидание';
+          document.getElementById('stat-status').style.color = '#888';
+          resetPreview();
+        }
+      });
+
+      socket.on('stream-status', (data) => {
+        if (!data.active) resetPreview();
+      });
+
+      socket.on('offer', async (data) => {
+        await handleOffer(data);
+      });
+
+      socket.on('answer', (data) => {
+        if (pc) pc.setRemoteDescription(new RTCSessionDescription(data)).catch(() => {});
+      });
+
+      socket.on('ice-candidate', (data) => {
+        if (pc) pc.addIceCandidate(new RTCIceCandidate(data)).catch(() => {});
+      });
+
+      socket.on('phone-stats', (stats) => {
+        if (stats.width) {
+          document.getElementById('stat-resolution').textContent = `${stats.width}×${stats.height}`;
+        }
+        document.getElementById('stat-fps').textContent = stats.fps || '-';
+        document.getElementById('stat-bitrate').textContent = stats.bitrate ? `${stats.bitrate} kbps` : '-';
+      });
+
+      socket.on('disconnect', () => {
+        document.getElementById('status-dot').classList.remove('connected');
+        document.getElementById('status-label').textContent = 'Сервер отключен';
+      });
+    }
+
+    async function handleOffer(data) {
+      if (pc) pc.close();
+      pc = new RTCPeerConnection(PC_CONFIG);
+
+      pc.onicecandidate = (e) => {
+        if (e.candidate) socket.emit('ice-candidate', e.candidate);
+      };
+
+      pc.ontrack = (e) => {
+        if (e.streams && e.streams[0]) {
+          document.getElementById('preview-video').srcObject = e.streams[0];
+          document.getElementById('preview-placeholder').style.display = 'none';
+        }
+      };
+
+      pc.onconnectionstatechange = () => {
+        if (pc.connectionState === 'connected') {
+          document.getElementById('preview-placeholder').style.display = 'none';
+          document.getElementById('stat-status').textContent = 'Стриминг';
+        }
+      };
+
+      await pc.setRemoteDescription(new RTCSessionDescription(data));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      socket.emit('answer', pc.localDescription);
+    }
+
+    function resetPreview() {
+      if (pc) { pc.close(); pc = null; }
+      document.getElementById('preview-video').srcObject = null;
+      document.getElementById('preview-placeholder').style.display = 'flex';
+      document.getElementById('stat-resolution').textContent = '-';
+      document.getElementById('stat-fps').textContent = '-';
+      document.getElementById('stat-bitrate').textContent = '-';
+    }
+
+    connectSignaling();
+  </script>
+</body>
+</html>

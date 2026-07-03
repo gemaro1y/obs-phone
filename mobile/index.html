@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>PhoneStream</title>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link rel="stylesheet" href="/mobile/style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Setup Screen -->
+    <div id="screen-setup" class="screen active">
+      <div class="setup-header">
+        <div class="logo"><i data-lucide="video"></i></div>
+        <h1>PhoneStream</h1>
+        <p>Камера для OBS Studio</p>
+      </div>
+
+      <div class="setup-card">
+        <div class="connection-status" id="conn-status">
+          <span class="status-dot" id="status-dot"></span>
+          <span id="status-text">Не подключено</span>
+        </div>
+
+        <button class="btn btn-primary btn-full" id="btn-connect">
+          <i data-lucide="link"></i> Подключиться
+        </button>
+      </div>
+
+      <div class="settings-card" id="settings-panel" style="display:none;">
+        <h3><i data-lucide="settings"></i> Настройки</h3>
+
+        <div class="form-group">
+          <label><i data-lucide="camera"></i> Камера</label>
+          <select id="camera-select"></select>
+        </div>
+
+        <div class="form-group">
+          <label><i data-lucide="mic"></i> Микрофон</label>
+          <select id="mic-select"></select>
+        </div>
+
+        <div class="form-group">
+          <label><i data-lucide="scan"></i> Источник</label>
+          <div class="btn-group">
+            <button class="btn btn-sm active" data-source="camera"><i data-lucide="camera"></i> Камера</button>
+            <button class="btn btn-sm" data-source="screen"><i data-lucide="monitor"></i> Экран</button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label><i data-lucide="ratio"></i> Разрешение</label>
+          <div class="btn-group">
+            <button class="btn btn-sm" data-res="720">720p</button>
+            <button class="btn btn-sm active" data-res="1080">1080p</button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label><i data-lucide="gauge"></i> FPS</label>
+          <div class="btn-group">
+            <button class="btn btn-sm" data-fps="30">30</button>
+            <button class="btn btn-sm active" data-fps="60">60</button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label><i data-lucide="rotate-cw"></i> Ориентация</label>
+          <div class="btn-group btn-group-3">
+            <button class="btn btn-sm active" data-orient="auto"><i data-lucide="smartphone"></i></button>
+            <button class="btn btn-sm" data-orient="landscape"><i data-lucide="rectangle-horizontal"></i></button>
+            <button class="btn btn-sm" data-orient="portrait"><i data-lucide="rectangle-vertical"></i></button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label><i data-lucide="switch-camera"></i> Камера</label>
+          <div class="btn-group">
+            <button class="btn btn-sm active" data-facing="user"><i data-lucide="user"></i> Передняя</button>
+            <button class="btn btn-sm" data-facing="environment"><i data-lucide="mountain"></i> Задняя</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stream Screen -->
+    <div id="screen-stream" class="screen">
+      <div class="video-preview">
+        <video id="local-video" autoplay playsinline muted></video>
+        <div class="video-overlay" id="stream-overlay">
+          <div class="overlay-status" id="overlay-status">Подключение...</div>
+        </div>
+      </div>
+
+      <div class="stream-info-bar">
+        <div class="info-item">
+          <i data-lucide="gauge" style="width:12px;height:12px;"></i>
+          <span class="info-value" id="info-fps">0</span>
+        </div>
+        <div class="info-item">
+          <i data-lucide="maximize" style="width:12px;height:12px;"></i>
+          <span class="info-value" id="info-resolution">-</span>
+        </div>
+        <div class="info-item">
+          <i data-lucide="activity" style="width:12px;height:12px;"></i>
+          <span class="info-value" id="info-bitrate">-</span>
+        </div>
+      </div>
+
+      <div class="mic-level-container">
+        <label><i data-lucide="mic" style="width:12px;height:12px;"></i> Микрофон</label>
+        <div class="mic-level-bar">
+          <div class="mic-level-fill" id="mic-level"></div>
+        </div>
+      </div>
+
+      <div class="controls-bottom">
+        <button class="btn btn-icon" id="btn-switch-camera" title="Сменить камеру">
+          <i data-lucide="switch-camera"></i>
+        </button>
+        <button class="btn btn-large btn-stream" id="btn-stream">
+          <i data-lucide="radio"></i> Трансляция
+        </button>
+        <button class="btn btn-icon" id="btn-mute" title="Микрофон">
+          <i data-lucide="mic"></i>
+        </button>
+      </div>
+
+      <div class="bottom-bar">
+        <button class="btn btn-back" id="btn-back">
+          <i data-lucide="arrow-left"></i> Настройки
+        </button>
+        <div class="connection-indicator" id="live-indicator">
+          <span class="live-dot"></span> LIVE
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <script>lucide.createIcons();</script>
+  <script src="/mobile/app.js"></script>
+</body>
+</html>

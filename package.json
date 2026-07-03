@@ -1,0 +1,23 @@
+{
+  "name": "phone-stream",
+  "version": "1.0.0",
+  "description": "Phone as camera for OBS Studio via WebRTC",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "server": "node start.js",
+    "dev": "electron . --dev"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "http-proxy": "^1.18.1",
+    "internal-ip": "^7.0.0",
+    "node-forge": "^1.4.0",
+    "qrcode": "^1.5.3",
+    "selfsigned": "^5.5.0",
+    "socket.io": "^4.7.2"
+  },
+  "devDependencies": {
+    "electron": "^28.0.0"
+  }
+}
