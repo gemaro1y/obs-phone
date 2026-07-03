@@ -24,8 +24,8 @@
 ## Установка
 
 ```bash
-git clone https://github.com/gemaro1y/phone-stream.git
-cd phone-stream
+git clone https://github.com/gemaro1y/obs-phone.git
+cd obs-phone
 npm install
 ```
 
