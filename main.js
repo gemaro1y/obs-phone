@@ -1,3 +1,4 @@
+// gemaro1y
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const { startServer, getServerInfo } = require('./server');

@@ -1,3 +1,4 @@
+// gemaro1y
 let socket = null;
 let localStream = null;
 let audioContext = null;
