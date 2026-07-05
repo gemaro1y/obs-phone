@@ -23,28 +23,41 @@
     const img = document.getElementById('stream');
     const status = document.getElementById('status');
     let reconnectTimer = null;
+    let loading = false;
 
     function connect() {
-      // Clear previous
       if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (loading) return;
+      loading = true;
       img.src = '';
 
-      // Fetch MJPEG stream
       img.onload = () => {
+        loading = false;
         status.classList.add('hidden');
         img.style.display = 'block';
       };
+
       img.onerror = () => {
+        loading = false;
         status.classList.remove('hidden');
         img.style.display = 'none';
-        status.textContent = 'Ожидание камеры с телефона...';
-        reconnectTimer = setTimeout(connect, 2000);
+        status.textContent = 'Ожидание камеры...';
+        reconnectTimer = setTimeout(connect, 1500);
       };
 
       img.src = '/mjpeg?t=' + Date.now();
     }
 
-    connect();
+    window.addEventListener('load', connect);
+
+    let lastFrameTime = 0;
+    setInterval(() => {
+      if (img.style.display === 'block' && Date.now() - lastFrameTime > 5000) {
+        connect();
+      }
+    }, 3000);
+
+    img.addEventListener('load', () => { lastFrameTime = Date.now(); });
   </script>
 </body>
 </html>

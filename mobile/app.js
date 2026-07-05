@@ -128,12 +128,21 @@ function applyOrientation() {
   if (settings.orientation === 'portrait') {
     video.style.width = 'auto';
     video.style.height = '100%';
+    if (screen.orientation && screen.orientation.lock) {
+      screen.orientation.lock('portrait').catch(() => {});
+    }
   } else if (settings.orientation === 'landscape') {
     video.style.width = '100%';
     video.style.height = 'auto';
+    if (screen.orientation && screen.orientation.lock) {
+      screen.orientation.lock('landscape').catch(() => {});
+    }
   } else {
     video.style.width = '100%';
     video.style.height = '100%';
+    if (screen.orientation && screen.orientation.unlock) {
+      screen.orientation.unlock();
+    }
   }
 }
 
