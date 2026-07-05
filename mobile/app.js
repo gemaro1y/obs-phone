@@ -5,14 +5,9 @@ let audioContext = null;
 let analyser = null;
 let micMuted = false;
 let streaming = false;
-let frameInterval = null;
-let videoEl = null;
-let canvas = null;
-let ctx = null;
-let audioRecorder = null;
+let videoRecorder = null;
 let audioContext2 = null;
 let scriptProcessor = null;
-let deviceOrientation = 0;
 
 let settings = {
   resolution: '1080',
@@ -173,22 +168,10 @@ async function startCapture() {
     localVideo.srcObject = localStream;
     streamOverlay.classList.add('hidden');
     applyOrientation();
-
-    if (window.DeviceOrientationEvent) {
-      window.addEventListener('deviceorientation', (e) => {
-        deviceOrientation = e.alpha || 0;
-      });
-    }
-
-    if (screen.orientation) {
-      screen.orientation.addEventListener('change', () => {
-        deviceOrientation = screen.orientation.angle;
-      });
-    }
     localStream.getVideoTracks()[0].onended = () => { stopStreaming(); };
     startMicLevel();
     updateInfo();
-    if (streaming) startFrameCapture();
+    if (streaming) startVideoStream();
   } catch (e) {
     overlayStatus.textContent = 'Ошибка: ' + e.message;
     streamOverlay.classList.remove('hidden');
@@ -197,9 +180,9 @@ async function startCapture() {
 
 async function restartCapture() {
   const wasStreaming = streaming;
-  if (wasStreaming) stopFrameCapture();
+  if (wasStreaming) stopVideoStream();
   await startCapture();
-  if (wasStreaming) startFrameCapture();
+  if (wasStreaming) startVideoStream();
 }
 
 function startMicLevel() {
@@ -233,101 +216,47 @@ function updateInfo() {
   }
 }
 
-function startFrameCapture() {
-  stopFrameCapture();
-  canvas = document.createElement('canvas');
-  ctx = canvas.getContext('2d', { alpha: false, willReadFrequently: false });
-  videoEl = document.createElement('video');
-  videoEl.srcObject = localStream;
-  videoEl.playsInline = true;
-  videoEl.muted = true;
-  videoEl.play();
-  const maxDim = 960;
-  let vw, vh, scaledW, scaledH;
-  let sending = false;
-  let cachedRotation = 0;
-  let rotationTime = 0;
+function startVideoStream() {
+  stopVideoStream();
+  if (!localStream || !socket) return;
 
-  videoEl.onloadedmetadata = () => {
-    vw = videoEl.videoWidth;
-    vh = videoEl.videoHeight;
-    const ratio = Math.min(maxDim / vw, maxDim / vh);
-    scaledW = Math.round(vw * ratio);
-    scaledH = Math.round(vh * ratio);
-    canvas.width = Math.max(scaledW, scaledH);
-    canvas.height = Math.max(scaledW, scaledH);
-    document.getElementById('info-resolution').textContent = `${scaledW}×${scaledH}`;
-    console.log(`[Phone] Streaming ${scaledW}×${scaledH} @ ${settings.fps}fps`);
+  const videoTrack = localStream.getVideoTracks()[0];
+  const videoStream = new MediaStream([videoTrack]);
 
-    const quality = 0.35;
-    const minInterval = 1000 / Math.min(settings.fps, 24);
+  const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp8')
+    ? 'video/webm;codecs=vp8'
+    : 'video/webm';
 
-    function getRotation() {
-      if (screen.orientation) return screen.orientation.angle;
-      if (window.orientation !== undefined) return window.orientation;
-      return 0;
+  videoRecorder = new MediaRecorder(videoStream, {
+    mimeType,
+    videoBitsPerSecond: 2500000,
+  });
+
+  videoRecorder.ondataavailable = (e) => {
+    if (e.data.size > 0 && socket && socket.connected) {
+      socket.volatile.emit('frame', e.data);
     }
-
-    function sendFrame(now) {
-      frameInterval = requestAnimationFrame(sendFrame);
-      if (!streaming || !videoEl || videoEl.readyState < 2) return;
-      if (sending) return;
-      if (now - lastFrame < minInterval) return;
-
-      if (now - rotationTime > 500) {
-        cachedRotation = getRotation();
-        rotationTime = now;
-      }
-
-      lastFrame = now;
-      sending = true;
-
-      const rot = cachedRotation;
-      const isRot = rot === 90 || rot === 270 || rot === -90;
-
-      if (isRot) {
-        ctx.save();
-        ctx.translate(canvas.width / 2, canvas.height / 2);
-        ctx.rotate((rot * Math.PI) / 180);
-        ctx.drawImage(videoEl, -scaledW / 2, -scaledH / 2, scaledW, scaledH);
-        ctx.restore();
-      } else {
-        ctx.drawImage(videoEl, 0, 0, scaledW, scaledH);
-      }
-
-      canvas.toBlob((blob) => {
-        sending = false;
-        if (!blob || !socket) return;
-        socket.volatile.emit('frame', blob);
-      }, 'image/jpeg', quality);
-    }
-
-    let lastFrame = 0;
-    frameInterval = requestAnimationFrame(sendFrame);
   };
+
+  videoRecorder.start(100);
 }
 
-function stopFrameCapture() {
-  if (frameInterval) {
-    if (typeof frameInterval === 'number') cancelAnimationFrame(frameInterval);
-    else clearInterval(frameInterval);
-    frameInterval = null;
+function stopVideoStream() {
+  if (videoRecorder && videoRecorder.state !== 'inactive') {
+    videoRecorder.stop();
+    videoRecorder = null;
   }
 }
 
 function startAudioStream() {
   stopAudioStream();
   if (!localStream || !socket) return;
-
   const audioTracks = localStream.getAudioTracks();
   if (audioTracks.length === 0) return;
-
   const audioStream = new MediaStream(audioTracks);
   audioContext2 = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
   const source = audioContext2.createMediaStreamSource(audioStream);
-  const bufferSize = 4096;
-  scriptProcessor = audioContext2.createScriptProcessor(bufferSize, 1, 1);
-
+  scriptProcessor = audioContext2.createScriptProcessor(4096, 1, 1);
   scriptProcessor.onaudioprocess = (e) => {
     if (!streaming || !socket) return;
     const inputData = e.inputBuffer.getChannelData(0);
@@ -338,7 +267,6 @@ function startAudioStream() {
     }
     socket.emit('audio', pcm.buffer);
   };
-
   source.connect(scriptProcessor);
   scriptProcessor.connect(audioContext2.destination);
 }
@@ -351,7 +279,7 @@ function stopAudioStream() {
 function startStreaming() {
   if (!socket || !socket.connected || !localStream) return;
   streaming = true;
-  startFrameCapture();
+  startVideoStream();
   startAudioStream();
   btnStream.innerHTML = '<i data-lucide="square"></i> Стоп';
   lucide.createIcons();
@@ -363,7 +291,7 @@ function startStreaming() {
 
 function stopStreaming() {
   streaming = false;
-  stopFrameCapture();
+  stopVideoStream();
   stopAudioStream();
   btnStream.innerHTML = '<i data-lucide="radio"></i> Трансляция';
   lucide.createIcons();

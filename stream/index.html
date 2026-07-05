@@ -7,7 +7,7 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body { width: 100%; height: 100%; background: #000; overflow: hidden; }
-    img { width: 100%; height: 100%; object-fit: contain; display: block; }
+    video { width: 100%; height: 100%; object-fit: contain; display: block; }
     #status {
       position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
       color: #666; font: 16px sans-serif; text-align: center;
@@ -17,10 +17,10 @@
 </head>
 <body>
   <div id="status">Ожидание камеры с телефона...</div>
-  <img id="stream" style="display:none" />
+  <video id="stream" autoplay playsinline></video>
 
   <script>
-    const img = document.getElementById('stream');
+    const video = document.getElementById('stream');
     const status = document.getElementById('status');
     let reconnectTimer = null;
     let loading = false;
@@ -29,35 +29,33 @@
       if (reconnectTimer) clearTimeout(reconnectTimer);
       if (loading) return;
       loading = true;
-      img.src = '';
+      video.src = '';
 
-      img.onload = () => {
+      video.onloadeddata = () => {
         loading = false;
         status.classList.add('hidden');
-        img.style.display = 'block';
+        video.style.display = 'block';
       };
 
-      img.onerror = () => {
+      video.onerror = () => {
         loading = false;
         status.classList.remove('hidden');
-        img.style.display = 'none';
+        video.style.display = 'none';
         status.textContent = 'Ожидание камеры...';
         reconnectTimer = setTimeout(connect, 1500);
       };
 
-      img.src = '/mjpeg?t=' + Date.now();
+      video.src = '/video?t=' + Date.now();
     }
 
     window.addEventListener('load', connect);
 
-    let lastFrameTime = 0;
     setInterval(() => {
-      if (img.style.display === 'block' && Date.now() - lastFrameTime > 5000) {
-        connect();
+      if (video.readyState >= 2) {
+        status.classList.add('hidden');
+        video.style.display = 'block';
       }
-    }, 3000);
-
-    img.addEventListener('load', () => { lastFrameTime = Date.now(); });
+    }, 2000);
   </script>
 </body>
 </html>
