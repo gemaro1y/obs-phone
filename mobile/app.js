@@ -223,13 +223,18 @@ function startVideoStream() {
   const videoTrack = localStream.getVideoTracks()[0];
   const videoStream = new MediaStream([videoTrack]);
 
-  const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp8')
-    ? 'video/webm;codecs=vp8'
-    : 'video/webm';
+  let mimeType = 'video/webm';
+  if (MediaRecorder.isTypeSupported('video/webm;codecs=h264')) {
+    mimeType = 'video/webm;codecs=h264';
+  } else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) {
+    mimeType = 'video/webm;codecs=vp9';
+  } else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8')) {
+    mimeType = 'video/webm;codecs=vp8';
+  }
 
   videoRecorder = new MediaRecorder(videoStream, {
     mimeType,
-    videoBitsPerSecond: 2500000,
+    videoBitsPerSecond: 5000000,
   });
 
   videoRecorder.ondataavailable = (e) => {

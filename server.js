@@ -117,7 +117,7 @@ httpApp.get('/frame', (req, res) => {
 httpApp.get('/video', (req, res) => {
   console.log('[VIDEO] OBS connected');
   res.writeHead(200, {
-    'Content-Type': 'video/webm;codecs=vp8',
+    'Content-Type': 'video/webm',
     'Cache-Control': 'no-cache',
     'Connection': 'keep-alive',
     'Access-Control-Allow-Origin': '*',
