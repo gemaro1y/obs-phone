@@ -86,7 +86,7 @@ httpApp.use('/stream', express.static(path.join(__dirname, 'stream')));
 httpApp.get('/', (req, res) => res.sendFile(path.join(__dirname, 'stream', 'index.html')));
 
 httpApp.get('/mjpeg', (req, res) => {
-  console.log('[MJPEG] OBS connected');
+  console.log('[MJPEG] Client connected');
   res.writeHead(200, {
     'Content-Type': 'multipart/x-mixed-replace; boundary=frame',
     'Cache-Control': 'no-cache',
@@ -197,6 +197,7 @@ io.on('connection', (socket) => {
       }
       latestFrame = buffer;
       streamActive = true;
+      console.log(`[FRAME] ${buffer.length} bytes, ${mjpegClients.length} clients`);
       for (const client of mjpegClients) {
         try {
           const header = '--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ' + buffer.length + '\r\n\r\n';

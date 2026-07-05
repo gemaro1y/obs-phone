@@ -288,6 +288,7 @@ function startFrameCapture() {
         if (!blob || !socket || !socket.connected) return;
         totalBytesSent += blob.size;
         framesSent++;
+        console.log(`[Phone] Frame: ${blob.size} bytes`);
         socket.volatile.emit('frame', blob);
       }, 'image/jpeg', quality);
     }
