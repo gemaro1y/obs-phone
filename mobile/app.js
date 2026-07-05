@@ -12,6 +12,7 @@ let ctx = null;
 let audioRecorder = null;
 let audioContext2 = null;
 let scriptProcessor = null;
+let deviceOrientation = 0;
 
 let settings = {
   resolution: '1080',
@@ -172,6 +173,18 @@ async function startCapture() {
     localVideo.srcObject = localStream;
     streamOverlay.classList.add('hidden');
     applyOrientation();
+
+    if (window.DeviceOrientationEvent) {
+      window.addEventListener('deviceorientation', (e) => {
+        deviceOrientation = e.alpha || 0;
+      });
+    }
+
+    if (screen.orientation) {
+      screen.orientation.addEventListener('change', () => {
+        deviceOrientation = screen.orientation.angle;
+      });
+    }
     localStream.getVideoTracks()[0].onended = () => { stopStreaming(); };
     startMicLevel();
     updateInfo();
@@ -228,23 +241,26 @@ function startFrameCapture() {
   videoEl.srcObject = localStream;
   videoEl.playsInline = true;
   videoEl.play();
-  const maxWidth = 960;
-  const maxHeight = 540;
+  const maxDim = 960;
   videoEl.onloadedmetadata = () => {
-    let w = videoEl.videoWidth;
-    let h = videoEl.videoHeight;
-    if (w > maxWidth || h > maxHeight) {
-      const ratio = Math.min(maxWidth / w, maxHeight / h);
-      w = Math.round(w * ratio);
-      h = Math.round(h * ratio);
-    }
-    canvas.width = w;
-    canvas.height = h;
-    document.getElementById('info-resolution').textContent = `${w}×${h}`;
-    console.log(`[Phone] Streaming ${w}×${h} @ ${settings.fps}fps`);
+    const vw = videoEl.videoWidth;
+    const vh = videoEl.videoHeight;
+    const ratio = Math.min(maxDim / vw, maxDim / vh);
+    const baseW = Math.round(vw * ratio);
+    const baseH = Math.round(vh * ratio);
+    canvas.width = baseW;
+    canvas.height = baseH;
+    document.getElementById('info-resolution').textContent = `${baseW}×${baseH}`;
+    console.log(`[Phone] Streaming ${baseW}×${baseH} @ ${settings.fps}fps`);
     const quality = 0.4;
     let lastFrame = 0;
     const minInterval = 1000 / Math.min(settings.fps, 30);
+
+    function getRotation() {
+      if (screen.orientation) return screen.orientation.angle;
+      if (window.orientation !== undefined) return window.orientation;
+      return 0;
+    }
 
     function sendFrame(now) {
       if (!streaming || !videoEl || videoEl.readyState < 2) {
@@ -256,7 +272,24 @@ function startFrameCapture() {
         return;
       }
       lastFrame = now;
-      ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+
+      const rotation = getRotation();
+      const isRotated = rotation === 90 || rotation === 270 || rotation === -90;
+
+      if (isRotated) {
+        canvas.width = baseH;
+        canvas.height = baseW;
+        ctx.save();
+        ctx.translate(canvas.width / 2, canvas.height / 2);
+        ctx.rotate((rotation * Math.PI) / 180);
+        ctx.drawImage(videoEl, -baseW / 2, -baseH / 2, baseW, baseH);
+        ctx.restore();
+      } else {
+        canvas.width = baseW;
+        canvas.height = baseH;
+        ctx.drawImage(videoEl, 0, 0, baseW, baseH);
+      }
+
       canvas.toBlob((blob) => {
         if (!blob || !socket) return;
         socket.volatile.emit('frame', blob);
