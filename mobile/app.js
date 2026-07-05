@@ -234,7 +234,7 @@ function startVideoStream() {
 
   videoRecorder = new MediaRecorder(videoStream, {
     mimeType,
-    videoBitsPerSecond: 5000000,
+    videoBitsPerSecond: 8000000,
   });
 
   videoRecorder.ondataavailable = (e) => {
@@ -243,7 +243,7 @@ function startVideoStream() {
     }
   };
 
-  videoRecorder.start(100);
+  videoRecorder.start(66);
 }
 
 function stopVideoStream() {
