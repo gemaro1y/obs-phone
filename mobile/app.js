@@ -236,25 +236,31 @@ function updateInfo() {
 function startFrameCapture() {
   stopFrameCapture();
   canvas = document.createElement('canvas');
-  ctx = canvas.getContext('2d', { alpha: false });
+  ctx = canvas.getContext('2d', { alpha: false, willReadFrequently: false });
   videoEl = document.createElement('video');
   videoEl.srcObject = localStream;
   videoEl.playsInline = true;
+  videoEl.muted = true;
   videoEl.play();
   const maxDim = 960;
+  let vw, vh, scaledW, scaledH;
+  let sending = false;
+  let cachedRotation = 0;
+  let rotationTime = 0;
+
   videoEl.onloadedmetadata = () => {
-    const vw = videoEl.videoWidth;
-    const vh = videoEl.videoHeight;
+    vw = videoEl.videoWidth;
+    vh = videoEl.videoHeight;
     const ratio = Math.min(maxDim / vw, maxDim / vh);
-    const baseW = Math.round(vw * ratio);
-    const baseH = Math.round(vh * ratio);
-    canvas.width = baseW;
-    canvas.height = baseH;
-    document.getElementById('info-resolution').textContent = `${baseW}×${baseH}`;
-    console.log(`[Phone] Streaming ${baseW}×${baseH} @ ${settings.fps}fps`);
-    const quality = 0.4;
-    let lastFrame = 0;
-    const minInterval = 1000 / Math.min(settings.fps, 30);
+    scaledW = Math.round(vw * ratio);
+    scaledH = Math.round(vh * ratio);
+    canvas.width = Math.max(scaledW, scaledH);
+    canvas.height = Math.max(scaledW, scaledH);
+    document.getElementById('info-resolution').textContent = `${scaledW}×${scaledH}`;
+    console.log(`[Phone] Streaming ${scaledW}×${scaledH} @ ${settings.fps}fps`);
+
+    const quality = 0.35;
+    const minInterval = 1000 / Math.min(settings.fps, 24);
 
     function getRotation() {
       if (screen.orientation) return screen.orientation.angle;
@@ -263,39 +269,40 @@ function startFrameCapture() {
     }
 
     function sendFrame(now) {
-      if (!streaming || !videoEl || videoEl.readyState < 2) {
-        frameInterval = requestAnimationFrame(sendFrame);
-        return;
+      frameInterval = requestAnimationFrame(sendFrame);
+      if (!streaming || !videoEl || videoEl.readyState < 2) return;
+      if (sending) return;
+      if (now - lastFrame < minInterval) return;
+
+      if (now - rotationTime > 500) {
+        cachedRotation = getRotation();
+        rotationTime = now;
       }
-      if (now - lastFrame < minInterval) {
-        frameInterval = requestAnimationFrame(sendFrame);
-        return;
-      }
+
       lastFrame = now;
+      sending = true;
 
-      const rotation = getRotation();
-      const isRotated = rotation === 90 || rotation === 270 || rotation === -90;
+      const rot = cachedRotation;
+      const isRot = rot === 90 || rot === 270 || rot === -90;
 
-      if (isRotated) {
-        canvas.width = baseH;
-        canvas.height = baseW;
+      if (isRot) {
         ctx.save();
         ctx.translate(canvas.width / 2, canvas.height / 2);
-        ctx.rotate((rotation * Math.PI) / 180);
-        ctx.drawImage(videoEl, -baseW / 2, -baseH / 2, baseW, baseH);
+        ctx.rotate((rot * Math.PI) / 180);
+        ctx.drawImage(videoEl, -scaledW / 2, -scaledH / 2, scaledW, scaledH);
         ctx.restore();
       } else {
-        canvas.width = baseW;
-        canvas.height = baseH;
-        ctx.drawImage(videoEl, 0, 0, baseW, baseH);
+        ctx.drawImage(videoEl, 0, 0, scaledW, scaledH);
       }
 
       canvas.toBlob((blob) => {
+        sending = false;
         if (!blob || !socket) return;
         socket.volatile.emit('frame', blob);
       }, 'image/jpeg', quality);
-      frameInterval = requestAnimationFrame(sendFrame);
     }
+
+    let lastFrame = 0;
     frameInterval = requestAnimationFrame(sendFrame);
   };
 }
