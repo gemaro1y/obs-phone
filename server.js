@@ -1,10 +1,14 @@
 const express = require('express');
+const https = require('https');
 const http = require('http');
 const { Server } = require('socket.io');
 const os = require('os');
 const path = require('path');
+const forge = require('node-forge');
+const httpProxy = require('http-proxy');
 
-const PORT = 4800;
+const PORT_HTTP = 4801;
+const PORT_HTTPS = 4800;
 
 function getLocalIP() {
   const nets = os.networkInterfaces();
@@ -32,21 +36,44 @@ function getTailscaleIP() {
   return null;
 }
 
+function genCert() {
+  const ip = getLocalIP();
+  const tailscaleIP = getTailscaleIP();
+  const keys = forge.pki.rsa.generateKeyPair(2048);
+  const cert = forge.pki.createCertificate();
+  cert.publicKey = keys.publicKey;
+  cert.serialNumber = '01';
+  cert.validity.notBefore = new Date();
+  cert.validity.notAfter = new Date();
+  cert.validity.notAfter.setFullYear(cert.validity.notBefore.getFullYear() + 1);
+  const attrs = [{ name: 'commonName', value: ip }];
+  cert.setSubject(attrs);
+  cert.setIssuer(attrs);
+  const altNames = [
+    { type: 2, value: 'localhost' },
+    { type: 7, ip: '127.0.0.1' },
+    { type: 7, ip },
+  ];
+  if (tailscaleIP) altNames.push({ type: 7, ip: tailscaleIP });
+  cert.setExtensions([{ name: 'subjectAltName', altNames }]);
+  cert.sign(keys.privateKey, forge.md.sha256.create());
+  return {
+    key: forge.pki.privateKeyToPem(keys.privateKey),
+    cert: forge.pki.certificateToPem(cert),
+  };
+}
+
+const { key, cert: certPem } = genCert();
+
 let phoneConnected = false;
 let streamActive = false;
 let latestFrame = null;
 let mjpegClients = [];
 
-const app = express();
-
-app.use('/mobile', express.static(path.join(__dirname, 'mobile')));
-app.use('/stream', express.static(path.join(__dirname, 'stream')));
-
-app.get('/', (req, res) => {
-  res.redirect('/mobile');
-});
-
-app.get('/mjpeg', (req, res) => {
+const httpApp = express();
+httpApp.use('/stream', express.static(path.join(__dirname, 'stream')));
+httpApp.get('/', (req, res) => res.sendFile(path.join(__dirname, 'stream', 'index.html')));
+httpApp.get('/mjpeg', (req, res) => {
   res.writeHead(200, {
     'Content-Type': 'multipart/x-mixed-replace; boundary=frame',
     'Cache-Control': 'no-cache',
@@ -54,17 +81,32 @@ app.get('/mjpeg', (req, res) => {
     'Access-Control-Allow-Origin': '*',
   });
   mjpegClients.push(res);
-  req.on('close', () => {
-    mjpegClients = mjpegClients.filter((c) => c !== res);
-  });
+  req.on('close', () => { mjpegClients = mjpegClients.filter((c) => c !== res); });
 });
-
-app.get('/api/info', (req, res) => {
+httpApp.get('/api/info', (req, res) => {
   res.json({ phoneConnected, streamActive });
 });
 
-const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: '*' } });
+const httpServer = http.createServer(httpApp);
+const io = new Server(httpServer, { cors: { origin: '*' } });
+
+const httpsApp = express();
+httpsApp.use('/mobile', express.static(path.join(__dirname, 'mobile')));
+httpsApp.use('/renderer', express.static(path.join(__dirname, 'renderer')));
+httpsApp.get('/', (req, res) => res.sendFile(path.join(__dirname, 'mobile', 'index.html')));
+
+const httpsServer = https.createServer({ key, cert: certPem }, httpsApp);
+
+const proxy = httpProxy.createProxyServer({ target: `http://127.0.0.1:${PORT_HTTP}`, ws: true });
+proxy.on('error', (err) => console.log('[PROXY]', err.message));
+
+httpsServer.on('upgrade', (req, socket, head) => {
+  if (req.url.startsWith('/socket.io/')) {
+    proxy.ws(req, socket, head);
+  } else {
+    socket.destroy();
+  }
+});
 
 io.on('connection', (socket) => {
   socket.on('join', (role) => {
@@ -104,19 +146,19 @@ function startServer() {
   return new Promise((resolve) => {
     const ip = getLocalIP();
     const tailscaleIP = getTailscaleIP();
-    server.listen(PORT, '0.0.0.0', () => {
-      console.log('');
-      console.log('═══════════════════════════════════════');
-      console.log('  PhoneStream');
-      console.log('═══════════════════════════════════════');
-      console.log(`  Телефон:  http://${ip}:${PORT}/mobile`);
-      if (tailscaleIP) {
-        console.log(`  Удалённый: http://${tailscaleIP}:${PORT}/mobile`);
-      }
-      console.log(`  OBS:      http://localhost:${PORT}/stream`);
-      console.log('═══════════════════════════════════════');
-      console.log('');
-      resolve();
+    httpServer.listen(PORT_HTTP, '0.0.0.0', () => {
+      httpsServer.listen(PORT_HTTPS, '0.0.0.0', () => {
+        console.log('');
+        console.log('═══════════════════════════════════════');
+        console.log('  PhoneStream');
+        console.log('═══════════════════════════════════════');
+        console.log(`  Телефон:  https://${ip}:${PORT_HTTPS}/mobile`);
+        if (tailscaleIP) console.log(`  Удалённый: https://${tailscaleIP}:${PORT_HTTPS}/mobile`);
+        console.log(`  OBS:      http://localhost:${PORT_HTTP}/stream`);
+        console.log('═══════════════════════════════════════');
+        console.log('');
+        resolve();
+      });
     });
   });
 }

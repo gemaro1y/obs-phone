@@ -41,7 +41,7 @@ async function connectToServer() {
   btnConnect.disabled = true;
   btnConnect.textContent = 'Подключение...';
   try {
-    socket = io({ transports: ['websocket', 'polling'] });
+    socket = io(window.location.origin, { transports: ['websocket', 'polling'] });
     socket.on('connect', async () => {
       socket.emit('join', 'phone');
       statusDot.classList.add('connected');
