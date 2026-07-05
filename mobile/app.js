@@ -1,21 +1,15 @@
-// gemaro1y
 let socket = null;
 let localStream = null;
-let audioContext = null;
-let analyser = null;
-let micMuted = false;
 let streaming = false;
 let frameInterval = null;
 let videoEl = null;
 let canvas = null;
 let ctx = null;
-let audioContext2 = null;
-let scriptProcessor = null;
-let statsInterval = null;
 let framesSent = 0;
 let framesDropped = 0;
-let lastStatsTime = 0;
-let totalBytesSent = 0;
+let totalBytes = 0;
+let lastStats = 0;
+let sending = false;
 
 let settings = {
   resolution: '1080',
@@ -27,8 +21,6 @@ let settings = {
   source: 'camera',
 };
 
-const screenSetup = document.getElementById('screen-setup');
-const screenStream = document.getElementById('screen-stream');
 const btnConnect = document.getElementById('btn-connect');
 const statusDot = document.getElementById('status-dot');
 const statusText = document.getElementById('status-text');
@@ -49,7 +41,7 @@ async function connectToServer() {
   btnConnect.disabled = true;
   btnConnect.textContent = 'Подключение...';
   try {
-    socket = io(window.location.origin, { transports: ['websocket', 'polling'] });
+    socket = io({ transports: ['websocket', 'polling'] });
     socket.on('connect', async () => {
       socket.emit('join', 'phone');
       statusDot.classList.add('connected');
@@ -84,19 +76,17 @@ async function enumerateDevices() {
     const tmp = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
     tmp.getTracks().forEach(t => t.stop());
     const devices = await navigator.mediaDevices.enumerateDevices();
-    const cameras = devices.filter(d => d.kind === 'videoinput');
-    const mics = devices.filter(d => d.kind === 'audioinput');
     const camSel = document.getElementById('camera-select');
     const micSel = document.getElementById('mic-select');
-    camSel.innerHTML = cameras.map((d, i) =>
-      `<option value="${d.deviceId}" ${i === 0 ? 'selected' : ''}>${d.label || 'Camera ' + (i + 1)}</option>`
+    camSel.innerHTML = devices.filter(d => d.kind === 'videoinput').map((d, i) =>
+      `<option value="${d.deviceId}" ${i === 0 ? 'selected' : ''}>${d.label || 'Cam ' + (i + 1)}</option>`
     ).join('');
-    micSel.innerHTML = mics.map((d, i) =>
+    micSel.innerHTML = devices.filter(d => d.kind === 'audioinput').map((d, i) =>
       `<option value="${d.deviceId}" ${i === 0 ? 'selected' : ''}>${d.label || 'Mic ' + (i + 1)}</option>`
     ).join('');
     camSel.onchange = () => { settings.cameraId = camSel.value; restartCapture(); };
     micSel.onchange = () => { settings.micId = micSel.value; restartCapture(); };
-  } catch (e) { console.error(e); }
+  } catch (e) {}
 }
 
 document.querySelectorAll('[data-res]').forEach(b => b.addEventListener('click', () => {
@@ -128,19 +118,15 @@ document.querySelectorAll('[data-source]').forEach(b => b.addEventListener('clic
 }));
 
 function applyOrientation() {
-  const video = localVideo;
   if (settings.orientation === 'portrait') {
-    video.style.width = 'auto';
-    video.style.height = '100%';
-    if (screen.orientation && screen.orientation.lock) screen.orientation.lock('portrait').catch(() => {});
+    localVideo.style.width = 'auto';
+    localVideo.style.height = '100%';
   } else if (settings.orientation === 'landscape') {
-    video.style.width = '100%';
-    video.style.height = 'auto';
-    if (screen.orientation && screen.orientation.lock) screen.orientation.lock('landscape').catch(() => {});
+    localVideo.style.width = '100%';
+    localVideo.style.height = 'auto';
   } else {
-    video.style.width = '100%';
-    video.style.height = '100%';
-    if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock();
+    localVideo.style.width = '100%';
+    localVideo.style.height = '100%';
   }
 }
 
@@ -166,8 +152,7 @@ async function startCapture() {
     localVideo.srcObject = localStream;
     streamOverlay.classList.add('hidden');
     applyOrientation();
-    localStream.getVideoTracks()[0].onended = () => { stopStreaming(); };
-    startMicLevel();
+    localStream.getVideoTracks()[0].onended = () => stopStreaming();
     updateInfo();
     if (streaming) startFrameCapture();
   } catch (e) {
@@ -181,27 +166,6 @@ async function restartCapture() {
   if (was) stopFrameCapture();
   await startCapture();
   if (was) startFrameCapture();
-}
-
-function startMicLevel() {
-  if (audioContext) audioContext.close();
-  audioContext = new (window.AudioContext || window.webkitAudioContext)();
-  try {
-    const src = audioContext.createMediaStreamSource(localStream);
-    analyser = audioContext.createAnalyser();
-    analyser.fftSize = 256;
-    src.connect(analyser);
-    drawMicLevel();
-  } catch (e) {}
-}
-
-function drawMicLevel() {
-  if (!analyser) return;
-  const data = new Uint8Array(analyser.frequencyBinCount);
-  analyser.getByteFrequencyData(data);
-  const avg = data.reduce((a, b) => a + b) / data.length;
-  micLevel.style.width = Math.min(100, (avg / 128) * 100) + '%';
-  requestAnimationFrame(drawMicLevel);
 }
 
 function updateInfo() {
@@ -223,136 +187,91 @@ function startFrameCapture() {
   videoEl.playsInline = true;
   videoEl.muted = true;
   videoEl.play();
-  const maxDim = 1280;
-  let vw, vh, scaledW, scaledH;
-  let sending = false;
-  let cachedRotation = 0;
-  let rotationTime = 0;
   framesSent = 0;
   framesDropped = 0;
-  totalBytesSent = 0;
-  lastStatsTime = performance.now();
+  totalBytes = 0;
+  lastStats = performance.now();
+  sending = false;
 
   videoEl.onloadedmetadata = () => {
-    vw = videoEl.videoWidth;
-    vh = videoEl.videoHeight;
+    const vw = videoEl.videoWidth;
+    const vh = videoEl.videoHeight;
+    const maxDim = 1280;
     const ratio = Math.min(maxDim / vw, maxDim / vh);
-    scaledW = Math.round(vw * ratio);
-    scaledH = Math.round(vh * ratio);
-    canvas.width = scaledW;
-    canvas.height = scaledH;
-    document.getElementById('info-resolution').textContent = `${scaledW}×${scaledH}`;
-    console.log(`[Phone] ${scaledW}×${scaledH} @ ${settings.fps}fps`);
+    const sw = Math.round(vw * ratio);
+    const sh = Math.round(vh * ratio);
+    canvas.width = sw;
+    canvas.height = sh;
+    document.getElementById('info-resolution').textContent = `${sw}×${sh}`;
 
-    const quality = 0.6;
     const minInterval = 1000 / Math.min(settings.fps, 30);
+    let lastFrame = 0;
+    let rot = 0;
+    let rotTime = 0;
 
-    statsInterval = setInterval(updateStats, 1000);
+    setInterval(() => {
+      if (screen.orientation) rot = screen.orientation.angle;
+      else if (window.orientation !== undefined) rot = window.orientation;
+    }, 500);
 
-    function getRotation() {
-      if (screen.orientation) return screen.orientation.angle;
-      if (window.orientation !== undefined) return window.orientation;
-      return 0;
-    }
-
-    function sendFrame(now) {
-      frameInterval = requestAnimationFrame(sendFrame);
+    function send(now) {
+      frameInterval = requestAnimationFrame(send);
       if (!streaming || !videoEl || videoEl.readyState < 2) return;
       if (sending) { framesDropped++; return; }
       if (now - lastFrame < minInterval) return;
       lastFrame = now;
       sending = true;
 
-      if (now - rotationTime > 500) {
-        cachedRotation = getRotation();
-        rotationTime = now;
-      }
-
-      const rot = cachedRotation;
       const isRot = rot === 90 || rot === 270 || rot === -90;
-
       if (isRot) {
-        canvas.width = scaledH;
-        canvas.height = scaledW;
+        canvas.width = sh;
+        canvas.height = sw;
         ctx.save();
         ctx.translate(canvas.width / 2, canvas.height / 2);
         ctx.rotate((rot * Math.PI) / 180);
-        ctx.drawImage(videoEl, -scaledW / 2, -scaledH / 2, scaledW, scaledH);
+        ctx.drawImage(videoEl, -sw / 2, -sh / 2, sw, sh);
         ctx.restore();
       } else {
-        ctx.drawImage(videoEl, 0, 0, scaledW, scaledH);
+        canvas.width = sw;
+        canvas.height = sh;
+        ctx.drawImage(videoEl, 0, 0, sw, sh);
       }
 
       canvas.toBlob((blob) => {
         sending = false;
         if (!blob || !socket || !socket.connected) return;
-        totalBytesSent += blob.size;
+        totalBytes += blob.size;
         framesSent++;
-        console.log(`[Phone] Frame: ${blob.size} bytes`);
         socket.volatile.emit('frame', blob);
-      }, 'image/jpeg', quality);
+      }, 'image/jpeg', 0.6);
     }
 
-    let lastFrame = 0;
-    frameInterval = requestAnimationFrame(sendFrame);
-  };
-}
+    frameInterval = requestAnimationFrame(send);
 
-function updateStats() {
-  const now = performance.now();
-  const elapsed = (now - lastStatsTime) / 1000;
-  const fps = Math.round(framesSent / elapsed);
-  const bitrate = Math.round((totalBytesSent * 8) / elapsed / 1000);
-  const el = document.getElementById('info-bitrate');
-  if (el) el.textContent = `${bitrate} kbps | ${fps} fps | drop: ${framesDropped}`;
-  framesSent = 0;
-  framesDropped = 0;
-  totalBytesSent = 0;
-  lastStatsTime = now;
+    setInterval(() => {
+      const now = performance.now();
+      const elapsed = (now - lastStats) / 1000;
+      if (elapsed > 0) {
+        const fps = Math.round(framesSent / elapsed);
+        const kbps = Math.round((totalBytes * 8) / elapsed / 1000);
+        document.getElementById('info-bitrate').textContent = `${kbps}kbps ${fps}fps drop:${framesDropped}`;
+      }
+      framesSent = 0;
+      framesDropped = 0;
+      totalBytes = 0;
+      lastStats = now;
+    }, 1000);
+  };
 }
 
 function stopFrameCapture() {
-  if (statsInterval) { clearInterval(statsInterval); statsInterval = null; }
-  if (frameInterval) {
-    if (typeof frameInterval === 'number') cancelAnimationFrame(frameInterval);
-    else clearInterval(frameInterval);
-    frameInterval = null;
-  }
-}
-
-function startAudioStream() {
-  stopAudioStream();
-  if (!localStream || !socket) return;
-  const audioTracks = localStream.getAudioTracks();
-  if (audioTracks.length === 0) return;
-  const audioStream = new MediaStream(audioTracks);
-  audioContext2 = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
-  const source = audioContext2.createMediaStreamSource(audioStream);
-  scriptProcessor = audioContext2.createScriptProcessor(4096, 1, 1);
-  scriptProcessor.onaudioprocess = (e) => {
-    if (!streaming || !socket) return;
-    const inputData = e.inputBuffer.getChannelData(0);
-    const pcm = new Int16Array(inputData.length);
-    for (let i = 0; i < inputData.length; i++) {
-      const s = Math.max(-1, Math.min(1, inputData[i]));
-      pcm[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-    }
-    socket.emit('audio', pcm.buffer);
-  };
-  source.connect(scriptProcessor);
-  scriptProcessor.connect(audioContext2.destination);
-}
-
-function stopAudioStream() {
-  if (scriptProcessor) { scriptProcessor.disconnect(); scriptProcessor = null; }
-  if (audioContext2) { audioContext2.close(); audioContext2 = null; }
+  if (frameInterval) { cancelAnimationFrame(frameInterval); frameInterval = null; }
 }
 
 function startStreaming() {
   if (!socket || !socket.connected || !localStream) return;
   streaming = true;
   startFrameCapture();
-  startAudioStream();
   btnStream.innerHTML = '<i data-lucide="square"></i> Стоп';
   lucide.createIcons();
   btnStream.classList.add('streaming');
@@ -364,7 +283,6 @@ function startStreaming() {
 function stopStreaming() {
   streaming = false;
   stopFrameCapture();
-  stopAudioStream();
   btnStream.innerHTML = '<i data-lucide="radio"></i> Трансляция';
   lucide.createIcons();
   btnStream.classList.remove('streaming');
@@ -384,16 +302,16 @@ btnSwitchCamera.addEventListener('click', async () => {
 });
 
 btnMute.addEventListener('click', () => {
-  micMuted = !micMuted;
-  if (localStream) localStream.getAudioTracks().forEach(t => t.enabled = !micMuted);
-  btnMute.classList.toggle('muted', micMuted);
-  btnMute.innerHTML = micMuted
-    ? '<i data-lucide="mic-off"></i>'
-    : '<i data-lucide="mic"></i>';
+  const muted = localStream.getAudioTracks()[0]?.enabled;
+  localStream.getAudioTracks().forEach(t => t.enabled = !muted);
+  btnMute.innerHTML = muted ? '<i data-lucide="mic-off"></i>' : '<i data-lucide="mic"></i>';
   lucide.createIcons();
 });
 
-btnBack.addEventListener('click', () => showScreen('setup'));
+btnBack.addEventListener('click', () => {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById('screen-setup').classList.add('active');
+});
 
 function showScreen(name) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
