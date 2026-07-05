@@ -96,6 +96,15 @@ phone-stream/
 - **Donatbox**: https://donatex.gg/donate/gemaro1y
 - **Telegram**: [@fovdov](https://t.me/fovdov)
 
+## Удалённый доступ (Tailscale)
+
+Для стрима из любой точки мира:
+
+1. Установи Tailscale на ПК и телефон
+2. Войди одним аккаунтом на обоих
+3. Сервер автоматически покажет Tailscale IP (`100.x.x.x`)
+4. На телефоне открой `https://<Tailscale_IP>:4800/mobile`
+
 ## Лицензия
 
 MIT
