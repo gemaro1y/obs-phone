@@ -211,13 +211,13 @@ function updateInfo() {
 function startFrameCapture() {
   stopFrameCapture();
   canvas = document.createElement('canvas');
-  ctx = canvas.getContext('2d');
+  ctx = canvas.getContext('2d', { alpha: false });
   videoEl = document.createElement('video');
   videoEl.srcObject = localStream;
   videoEl.playsInline = true;
   videoEl.play();
-  const maxWidth = 1280;
-  const maxHeight = 720;
+  const maxWidth = 960;
+  const maxHeight = 540;
   videoEl.onloadedmetadata = () => {
     let w = videoEl.videoWidth;
     let h = videoEl.videoHeight;
@@ -230,26 +230,37 @@ function startFrameCapture() {
     canvas.height = h;
     document.getElementById('info-resolution').textContent = `${w}×${h}`;
     console.log(`[Phone] Streaming ${w}×${h} @ ${settings.fps}fps`);
-    const quality = 0.5;
-    const interval = 1000 / settings.fps;
-    frameInterval = setInterval(() => {
-      if (!streaming || !videoEl || videoEl.readyState < 2) return;
+    const quality = 0.4;
+    let lastFrame = 0;
+    const minInterval = 1000 / Math.min(settings.fps, 30);
+
+    function sendFrame(now) {
+      if (!streaming || !videoEl || videoEl.readyState < 2) {
+        frameInterval = requestAnimationFrame(sendFrame);
+        return;
+      }
+      if (now - lastFrame < minInterval) {
+        frameInterval = requestAnimationFrame(sendFrame);
+        return;
+      }
+      lastFrame = now;
       ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
       canvas.toBlob((blob) => {
         if (!blob || !socket) return;
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          const base64 = reader.result.split(',')[1];
-          if (base64) socket.emit('frame', base64);
-        };
-        reader.readAsDataURL(blob);
+        socket.volatile.emit('frame', blob);
       }, 'image/jpeg', quality);
-    }, interval);
+      frameInterval = requestAnimationFrame(sendFrame);
+    }
+    frameInterval = requestAnimationFrame(sendFrame);
   };
 }
 
 function stopFrameCapture() {
-  if (frameInterval) { clearInterval(frameInterval); frameInterval = null; }
+  if (frameInterval) {
+    if (typeof frameInterval === 'number') cancelAnimationFrame(frameInterval);
+    else clearInterval(frameInterval);
+    frameInterval = null;
+  }
 }
 
 function startStreaming() {

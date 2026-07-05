@@ -147,9 +147,16 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('frame', (base64Data) => {
+  socket.on('frame', (data) => {
     try {
-      const buffer = Buffer.from(base64Data, 'base64');
+      let buffer;
+      if (Buffer.isBuffer(data)) {
+        buffer = data;
+      } else if (data instanceof ArrayBuffer) {
+        buffer = Buffer.from(data);
+      } else {
+        buffer = Buffer.from(data, 'base64');
+      }
       latestFrame = buffer;
       streamActive = true;
       const header = '--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ' + buffer.length + '\r\n\r\n';
