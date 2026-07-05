@@ -77,7 +77,6 @@ let phoneConnected = false;
 let streamActive = false;
 let latestFrame = null;
 let mjpegClients = [];
-let videoClients = [];
 let audioClients = [];
 let audioSampleRate = 44100;
 
@@ -112,21 +111,6 @@ httpApp.get('/frame', (req, res) => {
   } else {
     res.status(404).send('No frame yet');
   }
-});
-
-httpApp.get('/video', (req, res) => {
-  console.log('[VIDEO] OBS connected');
-  res.writeHead(200, {
-    'Content-Type': 'video/webm',
-    'Cache-Control': 'no-cache',
-    'Connection': 'keep-alive',
-    'Access-Control-Allow-Origin': '*',
-  });
-  videoClients.push(res);
-  req.on('close', () => {
-    videoClients = videoClients.filter((c) => c !== res);
-    console.log('[VIDEO] OBS disconnected');
-  });
 });
 
 httpApp.get('/audio', (req, res) => {
@@ -213,17 +197,12 @@ io.on('connection', (socket) => {
       }
       latestFrame = buffer;
       streamActive = true;
-
       for (const client of mjpegClients) {
         try {
           const header = '--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ' + buffer.length + '\r\n\r\n';
           const chunk = Buffer.concat([Buffer.from(header), buffer, Buffer.from('\r\n')]);
           client.write(chunk);
         } catch (e) {}
-      }
-
-      for (const client of videoClients) {
-        try { client.write(buffer); } catch (e) {}
       }
     } catch (e) {}
   });
@@ -275,7 +254,6 @@ function startServer() {
         }
         console.log(`  OBS:        http://localhost:${PORT_HTTP}/stream`);
         console.log(`  MJPEG:      http://localhost:${PORT_HTTP}/mjpeg`);
-        console.log(`  Видео:      http://localhost:${PORT_HTTP}/video`);
         console.log(`  Аудио:      http://localhost:${PORT_HTTP}/audio`);
         console.log(`  Код:        ${CONNECT_CODE}`);
         console.log('═══════════════════════════════════════════════');

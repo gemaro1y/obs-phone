@@ -5,9 +5,17 @@ let audioContext = null;
 let analyser = null;
 let micMuted = false;
 let streaming = false;
-let videoRecorder = null;
+let frameInterval = null;
+let videoEl = null;
+let canvas = null;
+let ctx = null;
 let audioContext2 = null;
 let scriptProcessor = null;
+let statsInterval = null;
+let framesSent = 0;
+let framesDropped = 0;
+let lastStatsTime = 0;
+let totalBytesSent = 0;
 
 let settings = {
   resolution: '1080',
@@ -124,21 +132,15 @@ function applyOrientation() {
   if (settings.orientation === 'portrait') {
     video.style.width = 'auto';
     video.style.height = '100%';
-    if (screen.orientation && screen.orientation.lock) {
-      screen.orientation.lock('portrait').catch(() => {});
-    }
+    if (screen.orientation && screen.orientation.lock) screen.orientation.lock('portrait').catch(() => {});
   } else if (settings.orientation === 'landscape') {
     video.style.width = '100%';
     video.style.height = 'auto';
-    if (screen.orientation && screen.orientation.lock) {
-      screen.orientation.lock('landscape').catch(() => {});
-    }
+    if (screen.orientation && screen.orientation.lock) screen.orientation.lock('landscape').catch(() => {});
   } else {
     video.style.width = '100%';
     video.style.height = '100%';
-    if (screen.orientation && screen.orientation.unlock) {
-      screen.orientation.unlock();
-    }
+    if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock();
   }
 }
 
@@ -147,11 +149,7 @@ async function startCapture() {
     if (localStream) localStream.getTracks().forEach(t => t.stop());
     if (settings.source === 'screen') {
       localStream = await navigator.mediaDevices.getDisplayMedia({
-        video: {
-          width: { ideal: settings.resolution === '1080' ? 1920 : 1280 },
-          height: { ideal: settings.resolution === '1080' ? 1080 : 720 },
-          frameRate: { ideal: settings.fps },
-        },
+        video: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: settings.fps } },
         audio: true,
       });
     } else {
@@ -171,7 +169,7 @@ async function startCapture() {
     localStream.getVideoTracks()[0].onended = () => { stopStreaming(); };
     startMicLevel();
     updateInfo();
-    if (streaming) startVideoStream();
+    if (streaming) startFrameCapture();
   } catch (e) {
     overlayStatus.textContent = 'Ошибка: ' + e.message;
     streamOverlay.classList.remove('hidden');
@@ -179,10 +177,10 @@ async function startCapture() {
 }
 
 async function restartCapture() {
-  const wasStreaming = streaming;
-  if (wasStreaming) stopVideoStream();
+  const was = streaming;
+  if (was) stopFrameCapture();
   await startCapture();
-  if (wasStreaming) startVideoStream();
+  if (was) startFrameCapture();
 }
 
 function startMicLevel() {
@@ -216,40 +214,108 @@ function updateInfo() {
   }
 }
 
-function startVideoStream() {
-  stopVideoStream();
-  if (!localStream || !socket) return;
+function startFrameCapture() {
+  stopFrameCapture();
+  canvas = document.createElement('canvas');
+  ctx = canvas.getContext('2d', { alpha: false });
+  videoEl = document.createElement('video');
+  videoEl.srcObject = localStream;
+  videoEl.playsInline = true;
+  videoEl.muted = true;
+  videoEl.play();
+  const maxDim = 1280;
+  let vw, vh, scaledW, scaledH;
+  let sending = false;
+  let cachedRotation = 0;
+  let rotationTime = 0;
+  framesSent = 0;
+  framesDropped = 0;
+  totalBytesSent = 0;
+  lastStatsTime = performance.now();
 
-  const videoTrack = localStream.getVideoTracks()[0];
-  const videoStream = new MediaStream([videoTrack]);
+  videoEl.onloadedmetadata = () => {
+    vw = videoEl.videoWidth;
+    vh = videoEl.videoHeight;
+    const ratio = Math.min(maxDim / vw, maxDim / vh);
+    scaledW = Math.round(vw * ratio);
+    scaledH = Math.round(vh * ratio);
+    canvas.width = scaledW;
+    canvas.height = scaledH;
+    document.getElementById('info-resolution').textContent = `${scaledW}×${scaledH}`;
+    console.log(`[Phone] ${scaledW}×${scaledH} @ ${settings.fps}fps`);
 
-  let mimeType = 'video/webm';
-  if (MediaRecorder.isTypeSupported('video/webm;codecs=h264')) {
-    mimeType = 'video/webm;codecs=h264';
-  } else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) {
-    mimeType = 'video/webm;codecs=vp9';
-  } else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8')) {
-    mimeType = 'video/webm;codecs=vp8';
-  }
+    const quality = 0.6;
+    const minInterval = 1000 / Math.min(settings.fps, 30);
 
-  videoRecorder = new MediaRecorder(videoStream, {
-    mimeType,
-    videoBitsPerSecond: 8000000,
-  });
+    statsInterval = setInterval(updateStats, 1000);
 
-  videoRecorder.ondataavailable = (e) => {
-    if (e.data.size > 0 && socket && socket.connected) {
-      socket.volatile.emit('frame', e.data);
+    function getRotation() {
+      if (screen.orientation) return screen.orientation.angle;
+      if (window.orientation !== undefined) return window.orientation;
+      return 0;
     }
-  };
 
-  videoRecorder.start(66);
+    function sendFrame(now) {
+      frameInterval = requestAnimationFrame(sendFrame);
+      if (!streaming || !videoEl || videoEl.readyState < 2) return;
+      if (sending) { framesDropped++; return; }
+      if (now - lastFrame < minInterval) return;
+      lastFrame = now;
+      sending = true;
+
+      if (now - rotationTime > 500) {
+        cachedRotation = getRotation();
+        rotationTime = now;
+      }
+
+      const rot = cachedRotation;
+      const isRot = rot === 90 || rot === 270 || rot === -90;
+
+      if (isRot) {
+        canvas.width = scaledH;
+        canvas.height = scaledW;
+        ctx.save();
+        ctx.translate(canvas.width / 2, canvas.height / 2);
+        ctx.rotate((rot * Math.PI) / 180);
+        ctx.drawImage(videoEl, -scaledW / 2, -scaledH / 2, scaledW, scaledH);
+        ctx.restore();
+      } else {
+        ctx.drawImage(videoEl, 0, 0, scaledW, scaledH);
+      }
+
+      canvas.toBlob((blob) => {
+        sending = false;
+        if (!blob || !socket || !socket.connected) return;
+        totalBytesSent += blob.size;
+        framesSent++;
+        socket.volatile.emit('frame', blob);
+      }, 'image/jpeg', quality);
+    }
+
+    let lastFrame = 0;
+    frameInterval = requestAnimationFrame(sendFrame);
+  };
 }
 
-function stopVideoStream() {
-  if (videoRecorder && videoRecorder.state !== 'inactive') {
-    videoRecorder.stop();
-    videoRecorder = null;
+function updateStats() {
+  const now = performance.now();
+  const elapsed = (now - lastStatsTime) / 1000;
+  const fps = Math.round(framesSent / elapsed);
+  const bitrate = Math.round((totalBytesSent * 8) / elapsed / 1000);
+  const el = document.getElementById('info-bitrate');
+  if (el) el.textContent = `${bitrate} kbps | ${fps} fps | drop: ${framesDropped}`;
+  framesSent = 0;
+  framesDropped = 0;
+  totalBytesSent = 0;
+  lastStatsTime = now;
+}
+
+function stopFrameCapture() {
+  if (statsInterval) { clearInterval(statsInterval); statsInterval = null; }
+  if (frameInterval) {
+    if (typeof frameInterval === 'number') cancelAnimationFrame(frameInterval);
+    else clearInterval(frameInterval);
+    frameInterval = null;
   }
 }
 
@@ -284,7 +350,7 @@ function stopAudioStream() {
 function startStreaming() {
   if (!socket || !socket.connected || !localStream) return;
   streaming = true;
-  startVideoStream();
+  startFrameCapture();
   startAudioStream();
   btnStream.innerHTML = '<i data-lucide="square"></i> Стоп';
   lucide.createIcons();
@@ -296,7 +362,7 @@ function startStreaming() {
 
 function stopStreaming() {
   streaming = false;
-  stopVideoStream();
+  stopFrameCapture();
   stopAudioStream();
   btnStream.innerHTML = '<i data-lucide="radio"></i> Трансляция';
   lucide.createIcons();
@@ -308,11 +374,6 @@ btnStream.addEventListener('click', () => {
   if (streaming) { stopStreaming(); return; }
   startStreaming();
 });
-
-async function autoStartStream() {
-  await new Promise(r => setTimeout(r, 1500));
-  startStreaming();
-}
 
 btnSwitchCamera.addEventListener('click', async () => {
   settings.facing = settings.facing === 'user' ? 'environment' : 'user';

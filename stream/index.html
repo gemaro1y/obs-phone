@@ -7,7 +7,7 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body { width: 100%; height: 100%; background: #000; overflow: hidden; }
-    video { width: 100%; height: 100%; object-fit: contain; display: block; }
+    img { width: 100%; height: 100%; object-fit: contain; display: block; }
     #status {
       position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
       color: #666; font: 16px sans-serif; text-align: center;
@@ -17,10 +17,10 @@
 </head>
 <body>
   <div id="status">Ожидание камеры с телефона...</div>
-  <video id="stream" autoplay playsinline></video>
+  <img id="stream" style="display:none" />
 
   <script>
-    const video = document.getElementById('stream');
+    const img = document.getElementById('stream');
     const status = document.getElementById('status');
     let reconnectTimer = null;
     let loading = false;
@@ -29,33 +29,32 @@
       if (reconnectTimer) clearTimeout(reconnectTimer);
       if (loading) return;
       loading = true;
-      video.src = '';
+      img.src = '';
 
-      video.onloadeddata = () => {
+      img.onload = () => {
         loading = false;
         status.classList.add('hidden');
-        video.style.display = 'block';
+        img.style.display = 'block';
       };
 
-      video.onerror = () => {
+      img.onerror = () => {
         loading = false;
         status.classList.remove('hidden');
-        video.style.display = 'none';
+        img.style.display = 'none';
         status.textContent = 'Ожидание камеры...';
         reconnectTimer = setTimeout(connect, 1500);
       };
 
-      video.src = '/video?t=' + Date.now();
+      img.src = '/mjpeg?t=' + Date.now();
     }
 
     window.addEventListener('load', connect);
 
     setInterval(() => {
-      if (video.readyState >= 2) {
-        status.classList.add('hidden');
-        video.style.display = 'block';
+      if (img.style.display === 'none' || !img.complete) {
+        connect();
       }
-    }, 2000);
+    }, 3000);
   </script>
 </body>
 </html>
