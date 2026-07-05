@@ -27,8 +27,21 @@ function getLocalIP() {
   return fallback || '127.0.0.1';
 }
 
+function getTailscaleIP() {
+  const nets = os.networkInterfaces();
+  for (const name of Object.keys(nets)) {
+    for (const iface of nets[name]) {
+      if (iface.family === 'IPv4' && !iface.internal && iface.address.startsWith('100.')) {
+        return iface.address;
+      }
+    }
+  }
+  return null;
+}
+
 function genCert() {
   const ip = getLocalIP();
+  const tailscaleIP = getTailscaleIP();
   const keys = forge.pki.rsa.generateKeyPair(2048);
   const cert = forge.pki.createCertificate();
   cert.publicKey = keys.publicKey;
@@ -39,13 +52,17 @@ function genCert() {
   const attrs = [{ name: 'commonName', value: ip }];
   cert.setSubject(attrs);
   cert.setIssuer(attrs);
+  const altNames = [
+    { type: 2, value: 'localhost' },
+    { type: 7, ip: '127.0.0.1' },
+    { type: 7, ip },
+  ];
+  if (tailscaleIP) {
+    altNames.push({ type: 7, ip: tailscaleIP });
+  }
   cert.setExtensions([{
     name: 'subjectAltName',
-    altNames: [
-      { type: 2, value: 'localhost' },
-      { type: 7, ip: '127.0.0.1' },
-      { type: 7, ip },
-    ],
+    altNames,
   }]);
   cert.sign(keys.privateKey, forge.md.sha256.create());
   return {
@@ -162,16 +179,20 @@ io.on('connection', (socket) => {
 function startServer() {
   return new Promise((resolve) => {
     const ip = getLocalIP();
+    const tailscaleIP = getTailscaleIP();
     httpServer.listen(PORT_HTTP, '0.0.0.0', () => {
       httpsServer.listen(PORT_HTTPS, '0.0.0.0', () => {
         console.log('');
         console.log('═══════════════════════════════════════════════');
         console.log('  PhoneStream');
         console.log('═══════════════════════════════════════════════');
-        console.log(`  Телефон: https://${ip}:${PORT_HTTPS}/mobile`);
-        console.log(`  OBS:     http://localhost:${PORT_HTTP}/stream`);
-        console.log(`  MJPEG:   http://localhost:${PORT_HTTP}/mjpeg`);
-        console.log(`  Код:     ${CONNECT_CODE}`);
+        console.log(`  Локальный:  https://${ip}:${PORT_HTTPS}/mobile`);
+        if (tailscaleIP) {
+          console.log(`  Удалённый:  https://${tailscaleIP}:${PORT_HTTPS}/mobile`);
+        }
+        console.log(`  OBS:        http://localhost:${PORT_HTTP}/stream`);
+        console.log(`  MJPEG:      http://localhost:${PORT_HTTP}/mjpeg`);
+        console.log(`  Код:        ${CONNECT_CODE}`);
         console.log('═══════════════════════════════════════════════');
         console.log('');
         resolve();
