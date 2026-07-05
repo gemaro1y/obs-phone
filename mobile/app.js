@@ -9,6 +9,9 @@ let frameInterval = null;
 let videoEl = null;
 let canvas = null;
 let ctx = null;
+let audioRecorder = null;
+let audioContext2 = null;
+let scriptProcessor = null;
 
 let settings = {
   resolution: '1080',
@@ -263,10 +266,44 @@ function stopFrameCapture() {
   }
 }
 
+function startAudioStream() {
+  stopAudioStream();
+  if (!localStream || !socket) return;
+
+  const audioTracks = localStream.getAudioTracks();
+  if (audioTracks.length === 0) return;
+
+  const audioStream = new MediaStream(audioTracks);
+  audioContext2 = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
+  const source = audioContext2.createMediaStreamSource(audioStream);
+  const bufferSize = 4096;
+  scriptProcessor = audioContext2.createScriptProcessor(bufferSize, 1, 1);
+
+  scriptProcessor.onaudioprocess = (e) => {
+    if (!streaming || !socket) return;
+    const inputData = e.inputBuffer.getChannelData(0);
+    const pcm = new Int16Array(inputData.length);
+    for (let i = 0; i < inputData.length; i++) {
+      const s = Math.max(-1, Math.min(1, inputData[i]));
+      pcm[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+    }
+    socket.emit('audio', pcm.buffer);
+  };
+
+  source.connect(scriptProcessor);
+  scriptProcessor.connect(audioContext2.destination);
+}
+
+function stopAudioStream() {
+  if (scriptProcessor) { scriptProcessor.disconnect(); scriptProcessor = null; }
+  if (audioContext2) { audioContext2.close(); audioContext2 = null; }
+}
+
 function startStreaming() {
   if (!socket || !socket.connected || !localStream) return;
   streaming = true;
   startFrameCapture();
+  startAudioStream();
   btnStream.innerHTML = '<i data-lucide="square"></i> Стоп';
   lucide.createIcons();
   btnStream.classList.add('streaming');
@@ -278,6 +315,7 @@ function startStreaming() {
 function stopStreaming() {
   streaming = false;
   stopFrameCapture();
+  stopAudioStream();
   btnStream.innerHTML = '<i data-lucide="radio"></i> Трансляция';
   lucide.createIcons();
   btnStream.classList.remove('streaming');

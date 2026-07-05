@@ -77,6 +77,8 @@ let phoneConnected = false;
 let streamActive = false;
 let latestFrame = null;
 let mjpegClients = [];
+let audioClients = [];
+let audioSampleRate = 44100;
 
 const httpApp = express();
 
@@ -109,6 +111,42 @@ httpApp.get('/frame', (req, res) => {
   } else {
     res.status(404).send('No frame yet');
   }
+});
+
+httpApp.get('/audio', (req, res) => {
+  console.log('[AUDIO] OBS connected');
+  res.writeHead(200, {
+    'Content-Type': 'audio/wav',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'Access-Control-Allow-Origin': '*',
+  });
+
+  const channels = 1;
+  const bitsPerSample = 16;
+  const byteRate = audioSampleRate * channels * (bitsPerSample / 8);
+  const blockAlign = channels * (bitsPerSample / 8);
+  const header = Buffer.alloc(44);
+  header.write('RIFF', 0);
+  header.writeUInt32LE(0xFFFFFFFF, 4);
+  header.write('WAVE', 8);
+  header.write('fmt ', 12);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(channels, 22);
+  header.writeUInt32LE(audioSampleRate, 24);
+  header.writeUInt32LE(byteRate, 28);
+  header.writeUInt16LE(blockAlign, 32);
+  header.writeUInt16LE(bitsPerSample, 34);
+  header.write('data', 36);
+  header.writeUInt32LE(0xFFFFFFFF, 40);
+  res.write(header);
+
+  audioClients.push(res);
+  req.on('close', () => {
+    audioClients = audioClients.filter((c) => c !== res);
+    console.log('[AUDIO] OBS disconnected');
+  });
 });
 
 const httpServer = http.createServer(httpApp);
@@ -168,6 +206,22 @@ io.on('connection', (socket) => {
     } catch (e) {}
   });
 
+  socket.on('audio', (data) => {
+    try {
+      let buffer;
+      if (Buffer.isBuffer(data)) {
+        buffer = data;
+      } else if (data instanceof ArrayBuffer) {
+        buffer = Buffer.from(data);
+      } else {
+        buffer = Buffer.from(data);
+      }
+      for (const client of audioClients) {
+        try { client.write(buffer); } catch (e) {}
+      }
+    } catch (e) {}
+  });
+
   socket.on('phone-stats', (stats) => {
     io.emit('phone-stats', stats);
   });
@@ -199,6 +253,7 @@ function startServer() {
         }
         console.log(`  OBS:        http://localhost:${PORT_HTTP}/stream`);
         console.log(`  MJPEG:      http://localhost:${PORT_HTTP}/mjpeg`);
+        console.log(`  Аудио:      http://localhost:${PORT_HTTP}/audio`);
         console.log(`  Код:        ${CONNECT_CODE}`);
         console.log('═══════════════════════════════════════════════');
         console.log('');
